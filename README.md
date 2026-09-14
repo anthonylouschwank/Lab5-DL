@@ -9,10 +9,18 @@ interactúe con un entorno de Atari a través de ALE y genere un video de la par
 
 | Archivo | Descripción |
 |---|---|
+| `Informe_Lab5_ALE_SpaceInvaders.pdf` | Informe de investigación (3 páginas) |
 | `ale_utils.py` | Módulo de funciones reutilizables (el entregable de código) |
 | `Laboratorio5_ALE_SpaceInvaders.ipynb` | Notebook con la investigación, las pruebas y la generación de videos |
 | `videos/` | Videos `.mp4` generados |
+| `informe/` | Fuente HTML del informe y su figura |
 | `requirements.txt` | Dependencias con versiones fijadas |
+
+El PDF se regenera desde el HTML con Chrome headless:
+
+```bash
+chrome --headless=new --no-pdf-header-footer --print-to-pdf=Informe_Lab5_ALE_SpaceInvaders.pdf informe/informe.html
+```
 
 ## Setup
 
