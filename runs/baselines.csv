@@ -1,0 +1,8 @@
+politica,episodios,media,std,min,max
+aleatoria,5,107.0,32.0,65,155
+constante:NOOP,5,0.0,0.0,0,0
+constante:FIRE,5,285.0,0.0,285,285
+constante:RIGHT,5,0.0,0.0,0,0
+constante:LEFT,5,0.0,0.0,0,0
+constante:RIGHTFIRE,5,270.0,0.0,270,270
+constante:LEFTFIRE,5,285.0,0.0,285,285

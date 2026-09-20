@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+
+# Proyecto: artefactos pesados de entrenamiento.
+# Se versionan los pesos finales (runs/*/modelo.zip, runs/*/mejor/) y los CSV,
+# que son entregables; no los checkpoints intermedios ni los logs de TensorBoard.
+runs/*/tb/
+runs/*/checkpoints/
