@@ -1,0 +1,29 @@
+{
+  "pesos": "runs\\ppo-base-10M\\checkpoints\\ckpt_9000000_steps.zip",
+  "episodios": 30,
+  "acciones_pct": {
+    "NOOP": 2.045800649369307,
+    "FIRE": 30.64678332327673,
+    "RIGHT": 21.521133235640605,
+    "LEFT": 13.820647645317932,
+    "RIGHTFIRE": 15.63658305318507,
+    "LEFTFIRE": 16.329052093210354
+  },
+  "pct_disparo": 62.61241846967215,
+  "pct_movimiento": 67.30741602735397,
+  "puntaje": {
+    "media": 958.6666666666666,
+    "std": 362.9254591357417,
+    "min": 515.0,
+    "max": 1630.0
+  },
+  "correlacion_puntaje_duracion": 0.951117066517821,
+  "posicion_nave": {
+    "media": 76.17203063902727,
+    "std": 27.960307659054138,
+    "izquierda": 34.0607424071991,
+    "centro": 40.292463442069746,
+    "derecha": 25.646794150731157,
+    "frames": 4445
+  }
+}

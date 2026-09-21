@@ -1,1 +1,5 @@
 id,fecha,algoritmo,pasos,n_envs,eval_media,eval_max,eval_std,minutos,fps,notas
+ppo-piloto-1M,2026-09-19 23:48,ppo,1000448,8,198.0,395,99.6,18.4,898,piloto 1M: validar hiperparametros estandar de Atari antes de la corrida larga
+ppo-base-10M,2026-09-20 05:18,ppo,7000000,8,884.7,2720,459.5,143,965,"iteracion base: hiperparametros estandar de Atari (PPO 8 envs, lr 2.5e-4 lineal, clip 0.1 lineal, ent 0.01). 10M planificados, INTERRUMPIDA a 7M por reinicio de Windows Update. Eval: 30 episodios greedy del mejor checkpoint (7M). La curva no habia saturado."
+ppo-base-10M,2026-09-20 11:50,ppo,10000320,8,955.7,2030,388.4,66.8,2439,reanudada desde el checkpoint de 7M para completar los 10M planificados
+qrdqn-5M,2026-09-20 19:20,qrdqn,5000000,8,740.5,1655,308.0,329,253,"iteracion 2: QR-DQN distribucional (200 cuantiles), buffer 100k con optimize_memory_usage (limite de RAM; el canonico de 1M seria 28 GB). 8 entornos con gradient_steps=8 para conservar el replay ratio. Planificada a 10M, CORTADA a 5M deliberadamente: throttling termico de la GPU (86 C) bajo el ritmo a ~250 pasos/s y habria tomado 12h mas. Eval: 30 episodios greedy del checkpoint de 5M."

@@ -1,0 +1,4 @@
+candidato,politica,pesos,episodios,media,std,error_std,max_observado,esperado_max5,p90_max5
+ckpt-8M,greedy,runs\ppo-base-10M\checkpoints\ckpt_8000000_steps.zip,100,1029.4,430.76634037491823,43.07663403749182,2350.0,1565.59075,2060.0
+ckpt-9M,greedy,runs\ppo-base-10M\checkpoints\ckpt_9000000_steps.zip,100,1025.7,475.60173464780377,47.56017346478038,2340.0,1628.7935,2185.0
+ckpt-10M,greedy,runs\ppo-base-10M\checkpoints\ckpt_10000000_steps.zip,100,1020.65,435.09749194864355,43.509749194864355,2635.0,1537.5685,2030.0

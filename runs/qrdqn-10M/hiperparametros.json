@@ -1,0 +1,22 @@
+{
+  "algoritmo": "qrdqn",
+  "pasos": 10000000,
+  "seed": 0,
+  "n_envs": 8,
+  "n_quantiles": 200,
+  "buffer_size": 100000,
+  "optimize_memory_usage": true,
+  "replay_buffer_kwargs": {
+    "handle_timeout_termination": false
+  },
+  "learning_rate": 0.0001,
+  "batch_size": 32,
+  "learning_starts": 100000,
+  "target_update_interval": 1000,
+  "train_freq": 4,
+  "gradient_steps": 8,
+  "exploration_fraction": 0.025,
+  "exploration_initial_eps": 1.0,
+  "exploration_final_eps": 0.01,
+  "gamma": 0.99
+}

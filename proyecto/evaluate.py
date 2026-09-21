@@ -25,16 +25,25 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from sb3_contrib import QRDQN
 from stable_baselines3 import A2C, DQN, PPO
 
 from .config import ConfigEntorno
 from .envs import crear_entorno_evaluacion
 
-CLASES = {"ppo": PPO, "dqn": DQN, "a2c": A2C}
+CLASES = {"ppo": PPO, "dqn": DQN, "a2c": A2C, "qrdqn": QRDQN}
 
 
-def cargar_agente(dir_run: str | Path, usar_mejor: bool = False):
+def cargar_agente(
+    dir_run: str | Path,
+    usar_mejor: bool = False,
+    pesos: str | Path | None = None,
+):
     """Carga modelo + configuracion de entorno de una corrida.
+
+    ``pesos`` permite apuntar a un checkpoint concreto. Hace falta porque el
+    mejor agente no siempre es ``best_model.zip``: ese archivo se elige con
+    evaluaciones intermedias de pocos episodios, que sobrestiman al ganador.
 
     Returns
     -------
@@ -55,15 +64,21 @@ def cargar_agente(dir_run: str | Path, usar_mejor: bool = False):
     )
     algo = hp.get("algoritmo", "ppo")
 
-    pesos = dir_run / "mejor" / "best_model.zip" if usar_mejor else dir_run / "modelo.zip"
-    if not pesos.exists():
-        alternativa = dir_run / "modelo.zip" if usar_mejor else dir_run / "mejor" / "best_model.zip"
+    if pesos is not None:
+        ruta_pesos = Path(pesos)
+    elif usar_mejor:
+        ruta_pesos = dir_run / "mejor" / "best_model.zip"
+    else:
+        ruta_pesos = dir_run / "modelo.zip"
+
+    if not ruta_pesos.exists():
+        disponibles = sorted(p.name for p in dir_run.rglob("*.zip"))
         raise FileNotFoundError(
-            f"No existe {pesos}." + (f" Si existe {alternativa}." if alternativa.exists() else "")
+            f"No existe {ruta_pesos}. Disponibles en {dir_run}: {disponibles}"
         )
 
-    modelo = CLASES[algo].load(pesos, device="auto")
-    return modelo, cfg, pesos
+    modelo = CLASES[algo].load(ruta_pesos, device="auto")
+    return modelo, cfg, ruta_pesos
 
 
 def evaluar(
@@ -81,7 +96,13 @@ def evaluar(
     juego, porque el entorno se construye con ``cfg.para_evaluacion()``.
     """
     env = crear_entorno_evaluacion(
-        cfg, seed=seed, video_folder=video_folder, name_prefix=name_prefix
+        cfg,
+        seed=seed,
+        video_folder=video_folder,
+        name_prefix=name_prefix,
+        # Grabar solo los episodios pedidos: tras el ultimo, el VecEnv reinicia
+        # solo y ese reset dejaria un .mp4 vacio.
+        episode_trigger=lambda ep: ep < n_episodios,
     )
 
     resultados: list[dict[str, Any]] = []
@@ -135,6 +156,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Evalua un agente entrenado")
     p.add_argument("--run", required=True, help="carpeta de la corrida, ej: runs/ppo-base")
     p.add_argument("--mejor", action="store_true", help="usar mejor/best_model.zip")
+    p.add_argument("--pesos", default=None,
+                   help="ruta a un .zip concreto (tiene prioridad sobre --mejor)")
     p.add_argument("--episodios", type=int, default=5)
     p.add_argument("--seed", type=int, default=1000)
     p.add_argument("--estocastico", action="store_true",
@@ -144,7 +167,7 @@ def main() -> None:
                    help="carpeta de salida (por defecto <run>/videos)")
     args = p.parse_args()
 
-    modelo, cfg, pesos = cargar_agente(args.run, usar_mejor=args.mejor)
+    modelo, cfg, pesos = cargar_agente(args.run, usar_mejor=args.mejor, pesos=args.pesos)
 
     carpeta_video = None
     if args.video:

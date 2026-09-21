@@ -29,6 +29,7 @@ from typing import Any, Callable
 
 import numpy as np
 import torch
+from sb3_contrib import QRDQN
 from stable_baselines3 import A2C, DQN, PPO
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.evaluation import evaluate_policy
@@ -84,6 +85,35 @@ HIPERPARAMETROS: dict[str, dict[str, Any]] = {
         gamma=0.99,
         optimize_memory_usage=False,
     ),
+    # QR-DQN: DQN distribucional. En vez de estimar Q(s,a) como un escalar,
+    # aprende `n_quantiles` cuantiles de la distribucion de retornos. Eso lo
+    # hace mas robusto al ruido de la recompensa y suele superar a DQN y a PPO
+    # en Atari.
+    "qrdqn": dict(
+        n_envs=1,
+        n_quantiles=200,
+        # El buffer domina el consumo de RAM: 100k transiciones de 84x84x4 en
+        # uint8 son ~2.8 GB con optimize_memory_usage. Lo canonico serian 1M,
+        # que no cabe en 16 GB.
+        buffer_size=100_000,
+        optimize_memory_usage=True,
+        # SB3 no permite optimize_memory_usage junto con handle_timeout_termination.
+        # Desactivar el segundo es inocuo aqui: solo afecta el bootstrap cuando un
+        # episodio se TRUNCA por limite de tiempo, y en Atari ese limite son 108000
+        # frames (27000 pasos de agente) frente a episodios de ~1500. Nunca se
+        # alcanza. A cambio, el buffer ocupa la mitad: 2.8 GB en vez de 5.6 GB.
+        replay_buffer_kwargs={"handle_timeout_termination": False},
+        learning_rate=1e-4,
+        batch_size=32,
+        learning_starts=100_000,
+        target_update_interval=1_000,
+        train_freq=4,
+        gradient_steps=1,
+        exploration_fraction=0.025,
+        exploration_initial_eps=1.0,
+        exploration_final_eps=0.01,
+        gamma=0.99,
+    ),
     "a2c": dict(
         n_envs=8,
         n_steps=5,
@@ -95,7 +125,7 @@ HIPERPARAMETROS: dict[str, dict[str, Any]] = {
     ),
 }
 
-CLASES = {"ppo": PPO, "dqn": DQN, "a2c": A2C}
+CLASES = {"ppo": PPO, "dqn": DQN, "a2c": A2C, "qrdqn": QRDQN}
 
 
 def construir_modelo(
@@ -109,6 +139,11 @@ def construir_modelo(
     """Instancia el modelo de SB3 con los hiperparametros dados."""
     hp = dict(hp)
     hp.pop("n_envs", None)
+
+    # n_quantiles no es un argumento del algoritmo sino de la politica.
+    if "n_quantiles" in hp:
+        hp.setdefault("policy_kwargs", {})
+        hp["policy_kwargs"] = {**hp["policy_kwargs"], "n_quantiles": hp.pop("n_quantiles")}
 
     if algo == "ppo":
         # Los programas se construyen aqui para que el dict serializado a JSON
@@ -168,6 +203,21 @@ class EvaluacionReal(BaseCallback):
                 csv.writer(f).writerow(
                     ["pasos", "media", "std", "maximo", "minimo", "episodios", "segundos"]
                 )
+
+        # Al reanudar, num_timesteps ya viene alto: la proxima evaluacion debe
+        # programarse a partir de ahi y no en `cada_pasos` absolutos, o se
+        # dispararia en el primer step.
+        self._proximo = self.num_timesteps + self.cada_pasos
+
+        # Y el mejor puntaje historico debe recuperarse del CSV. Si se dejara en
+        # -inf, la primera evaluacion de la reanudacion sobrescribiria
+        # best_model.zip aunque fuera peor que el mejor ya alcanzado.
+        with self._csv.open(encoding="utf-8") as f:
+            previas = [float(r["media"]) for r in csv.DictReader(f)]
+        if previas:
+            self.mejor = max(previas)
+            if self.verbose:
+                print(f"[eval real] reanudando; mejor media previa = {self.mejor:.1f}")
 
     def _on_step(self) -> bool:
         if self.num_timesteps < self._proximo:
@@ -250,10 +300,21 @@ def main() -> None:
     p.add_argument("--n-envs", type=int, default=None, help="sobrescribe el valor del algoritmo")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--eval-cada", type=int, default=250_000)
-    p.add_argument("--eval-episodios", type=int, default=5)
+    p.add_argument("--eval-episodios", type=int, default=5,
+                   help="episodios de cada evaluacion intermedia (barata, ruidosa)")
+    # La competencia usa 5 episodios, pero con std ~100 el error estandar de la
+    # media sobre 5 es ~45 puntos: insuficiente para comparar iteraciones entre
+    # si. La evaluacion final usa mas episodios para que la tabla del informe
+    # tenga barras de error utilizables.
+    p.add_argument("--eval-final-episodios", type=int, default=30)
     p.add_argument("--checkpoint-cada", type=int, default=500_000)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--notas", default="", help="que cambio respecto a la iteracion anterior")
+    p.add_argument(
+        "--reanudar", default=None, metavar="CHECKPOINT.zip",
+        help="continuar el entrenamiento desde un checkpoint en vez de empezar de cero. "
+             "--pasos indica entonces los pasos ADICIONALES a correr.",
+    )
     p.add_argument("--hp", default="{}", help='overrides JSON, ej: \'{"learning_rate": 1e-4}\'')
     args = p.parse_args()
 
@@ -266,13 +327,27 @@ def main() -> None:
     n_envs = args.n_envs or hp.get("n_envs", 8)
     hp["n_envs"] = n_envs
 
-    cfg = CONFIG_BASE
-    cfg.guardar(dir_run / "config_entorno.json")
-    (dir_run / "hiperparametros.json").write_text(
-        json.dumps({"algoritmo": args.algo, "pasos": args.pasos, "seed": args.seed, **hp},
-                   indent=2, default=str),
-        encoding="utf-8",
-    )
+    # Al reanudar se conserva la configuracion original de la corrida: cambiarla
+    # invalidaria los pesos que se estan cargando.
+    ruta_cfg = dir_run / "config_entorno.json"
+    if args.reanudar and ruta_cfg.exists():
+        cfg = ConfigEntorno.cargar(ruta_cfg)
+    else:
+        cfg = CONFIG_BASE
+        cfg.guardar(ruta_cfg)
+
+    if args.reanudar:
+        (dir_run / "reanudacion.json").write_text(
+            json.dumps({"checkpoint": str(args.reanudar), "pasos_adicionales": args.pasos,
+                        "fecha": f"{datetime.now():%Y-%m-%d %H:%M}"}, indent=2),
+            encoding="utf-8",
+        )
+    else:
+        (dir_run / "hiperparametros.json").write_text(
+            json.dumps({"algoritmo": args.algo, "pasos": args.pasos, "seed": args.seed, **hp},
+                       indent=2, default=str),
+            encoding="utf-8",
+        )
 
     print("=" * 70)
     print(f"  Iteracion : {run_id}")
@@ -284,7 +359,17 @@ def main() -> None:
     print("=" * 70)
 
     env = crear_entorno_entrenamiento(cfg, n_envs=n_envs, seed=args.seed)
-    modelo = construir_modelo(args.algo, env, hp, str(dir_run / "tb"), args.seed, args.device)
+
+    if args.reanudar:
+        modelo = CLASES[args.algo].load(
+            args.reanudar, env=env, device=args.device,
+            tensorboard_log=str(dir_run / "tb"),
+        )
+        print(f"  Reanudado desde {args.reanudar} en {modelo.num_timesteps:,} pasos")
+    else:
+        modelo = construir_modelo(
+            args.algo, env, hp, str(dir_run / "tb"), args.seed, args.device
+        )
 
     callbacks = [
         EvaluacionReal(cfg, dir_run, args.eval_cada, args.eval_episodios, seed=1000),
@@ -297,7 +382,16 @@ def main() -> None:
 
     t0 = time.time()
     try:
-        modelo.learn(total_timesteps=args.pasos, callback=callbacks, progress_bar=True)
+        # reset_num_timesteps=False hace dos cosas necesarias al reanudar: el
+        # contador sigue desde donde iba, y SB3 suma los pasos ya hechos a
+        # _total_timesteps, con lo que los programas lineales de learning rate y
+        # clip_range continuan su descenso en vez de reiniciarse.
+        modelo.learn(
+            total_timesteps=args.pasos,
+            callback=callbacks,
+            progress_bar=True,
+            reset_num_timesteps=not args.reanudar,
+        )
     except KeyboardInterrupt:
         print("\nInterrumpido: se guarda el modelo con lo aprendido hasta ahora.")
     finally:
@@ -306,20 +400,22 @@ def main() -> None:
         env.close()
 
     # Evaluacion final con la configuracion oficial de la competencia.
-    print("\nEvaluacion final (5 episodios, politica greedy)...")
+    n_final = args.eval_final_episodios
+    print(f"\nEvaluacion final ({n_final} episodios, politica greedy)...")
     env_eval = crear_entorno_evaluacion(cfg, seed=1000)
     try:
         recompensas, _ = evaluate_policy(
-            modelo, env_eval, n_eval_episodes=5, deterministic=True,
+            modelo, env_eval, n_eval_episodes=n_final, deterministic=True,
             return_episode_rewards=True,
         )
     finally:
         env_eval.close()
 
     r = np.asarray(recompensas, dtype=float)
+    err = r.std() / np.sqrt(len(r))
     fps = modelo.num_timesteps / max(time.time() - t0, 1e-9)
     print(f"  episodios : {[int(x) for x in r]}")
-    print(f"  media     : {r.mean():.1f} +- {r.std():.1f}")
+    print(f"  media     : {r.mean():.1f} +- {r.std():.1f}  (error estandar {err:.1f})")
     print(f"  maximo    : {r.max():.0f}   <- metrica del ranking")
     print(f"  tiempo    : {minutos:.1f} min   ({fps:.0f} pasos/s)")
 

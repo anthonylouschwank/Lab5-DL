@@ -1,0 +1,5 @@
+{
+  "checkpoint": "runs/ppo-base-10M/checkpoints/ckpt_7000000_steps.zip",
+  "pasos_adicionales": 3000000,
+  "fecha": "2026-09-20 10:42"
+}

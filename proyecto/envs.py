@@ -51,6 +51,11 @@ def _constructor(
     """Retorna la fabrica de un entorno individual (lo que espera un VecEnv)."""
 
     def _init() -> gym.Env:
+        # Repetido a proposito. En Windows los workers de SubprocVecEnv arrancan
+        # con 'spawn': si el proceso hijo no re-importa este modulo -- cosa que
+        # pasa al lanzar desde un notebook o desde `python -c` -- el registro de
+        # nivel de modulo no corre y gym.make falla con NamespaceNotFound.
+        gym.register_envs(ale_py)
         env = gym.make(
             cfg.env_id,
             # El salto lo aplica AtariWrapper; aqui debe ser 1 para no duplicarlo.
@@ -62,6 +67,10 @@ def _constructor(
 
         if video_folder is not None:
             Path(video_folder).mkdir(parents=True, exist_ok=True)
+            # ALE declara render_fps=30, pero el Atari 2600 corre a 60 Hz y aqui
+            # se graba antes del salto de frames, o sea un frame por frame del
+            # emulador. Sin corregirlo, el video sale a media velocidad.
+            env.metadata = {**env.metadata, "render_fps": 60}
             env = RecordVideo(
                 env,
                 video_folder=str(video_folder),
@@ -83,7 +92,10 @@ def _constructor(
         )
 
         env = Monitor(env)
-        env.reset(seed=seed + idx)
+        # Ojo: no se llama env.reset() aqui. RecordVideo cuenta un episodio por
+        # cada reset del entorno que envuelve, asi que un reset en la
+        # construccion generaria un .mp4 espurio de unos pocos KB. La semilla se
+        # aplica despues sobre el VecEnv, cuyo primer reset la consume.
         env.action_space.seed(seed + idx)
         return env
 
@@ -130,6 +142,9 @@ def crear_vec_entorno(
     if cfg.frame_stack > 1:
         vec = VecFrameStack(vec, n_stack=cfg.frame_stack)
 
+    # El primer reset consume estas semillas (SB3 las limpia despues), que es
+    # justo lo que se quiere: reproducibilidad sin un reset extra al construir.
+    vec.seed(seed)
     return vec
 
 
@@ -145,11 +160,16 @@ def crear_entorno_evaluacion(
     seed: int = 1000,
     video_folder: str | Path | None = None,
     name_prefix: str = "agente-evaluacion",
+    episode_trigger: Callable[[int], bool] | None = None,
 ) -> VecEnv:
     """Entorno de evaluacion: un solo entorno, sin atajos de entrenamiento.
 
     Aplica ``cfg.para_evaluacion()``, de modo que un episodio son las 3 vidas
     completas y la recompensa es el puntaje real del juego.
+
+    ``episode_trigger`` sirve para acotar cuantos episodios se graban: el VecEnv
+    reinicia automaticamente al terminar el ultimo, y ese reset abriria un
+    archivo de video vacio si no se filtra.
     """
     return crear_vec_entorno(
         cfg.para_evaluacion(),
@@ -158,6 +178,7 @@ def crear_entorno_evaluacion(
         subproceso=False,
         video_folder=video_folder,
         name_prefix=name_prefix,
+        episode_trigger=episode_trigger,
     )
 
 
