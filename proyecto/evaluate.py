@@ -34,10 +34,26 @@ from .envs import crear_entorno_evaluacion
 CLASES = {"ppo": PPO, "dqn": DQN, "a2c": A2C, "qrdqn": QRDQN}
 
 
+def elegir_device(pedido: str = "auto") -> str:
+    """Resuelve el dispositivo de forma segura para cualquier maquina.
+
+    No basta con ``torch.cuda.is_available()``: con drivers incompletos, o si
+    ``CUDA_VISIBLE_DEVICES`` esta vacio, torch puede responder True y a la vez
+    contar cero dispositivos. En ese estado SB3 elige "cuda" y la carga del modelo
+    falla con "Attempting to deserialize object on CUDA device 0". Exigir ademas
+    ``device_count() > 0`` hace que el agente caiga a CPU, donde corre sin problema.
+    """
+    if pedido != "auto":
+        return pedido
+    import torch
+    return "cuda" if torch.cuda.is_available() and torch.cuda.device_count() > 0 else "cpu"
+
+
 def cargar_agente(
     dir_run: str | Path,
     usar_mejor: bool = False,
     pesos: str | Path | None = None,
+    device: str = "auto",
 ):
     """Carga modelo + configuracion de entorno de una corrida.
 
@@ -77,7 +93,7 @@ def cargar_agente(
             f"No existe {ruta_pesos}. Disponibles en {dir_run}: {disponibles}"
         )
 
-    modelo = CLASES[algo].load(ruta_pesos, device="auto")
+    modelo = CLASES[algo].load(ruta_pesos, device=elegir_device(device))
     return modelo, cfg, ruta_pesos
 
 
@@ -163,11 +179,15 @@ def main() -> None:
     p.add_argument("--estocastico", action="store_true",
                    help="muestrear de la politica en vez de tomar el argmax")
     p.add_argument("--video", action="store_true", help="grabar los episodios")
+    p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
+                   help="forzar dispositivo; 'cpu' funciona en cualquier maquina")
     p.add_argument("--video-folder", default=None,
                    help="carpeta de salida (por defecto <run>/videos)")
     args = p.parse_args()
 
-    modelo, cfg, pesos = cargar_agente(args.run, usar_mejor=args.mejor, pesos=args.pesos)
+    modelo, cfg, pesos = cargar_agente(
+        args.run, usar_mejor=args.mejor, pesos=args.pesos, device=args.device
+    )
 
     carpeta_video = None
     if args.video:
@@ -175,6 +195,7 @@ def main() -> None:
 
     print("=" * 62)
     print(f"  Pesos    : {pesos}")
+    print(f"  Device   : {modelo.device}")
     print(f"  Entorno  : {cfg.para_evaluacion().resumen()}")
     print(f"  Politica : {'estocastica' if args.estocastico else 'greedy (argmax)'}")
     print(f"  Episodios: {args.episodios}")
